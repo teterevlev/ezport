@@ -54,7 +54,7 @@ func Write(message string) error {
 		return fmt.Errorf("port is not open, call Open() first")
 	}
 
-	_, err := port.Write([]byte(message + "\n"))
+	_, err := port.Write([]byte(message))
 	if err != nil {
 		return err
 	}
