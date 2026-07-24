@@ -1,10 +1,11 @@
 // Package ezport provides a simple API for working with serial ports (COM ports) in Go.
-// It automatically selects a port if not specified and allows sending data without blocking.
+// It automatically selects a free port if not specified and allows sending data without blocking.
 package ezport
 
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"go.bug.st/serial"
 )
@@ -15,27 +16,8 @@ type Port struct {
 	name string
 }
 
-// Open opens a COM port.
-// If portName is empty, selects the first available port alphabetically.
-// Returns the actual port name that was opened.
-func (p *Port) Open(portName string, baudRate int) (string, error) {
-	if p.port != nil {
-		return "", fmt.Errorf("port is already open (%s), call Close() first", p.name)
-	}
-
-	if portName == "" {
-		ports, err := serial.GetPortsList()
-		if err != nil {
-			return "", err
-		}
-		if len(ports) == 0 {
-			return "", fmt.Errorf("no COM ports found")
-		}
-		sort.Strings(ports)
-		portName = ports[0]
-	}
-
-	mode := &serial.Mode{
+func serialMode(baudRate int) *serial.Mode {
+	return &serial.Mode{
 		BaudRate: baudRate,
 		DataBits: 8,
 		Parity:   serial.NoParity,
@@ -45,15 +27,51 @@ func (p *Port) Open(portName string, baudRate int) (string, error) {
 			DTR: false,
 		},
 	}
+}
 
-	port, err := serial.Open(portName, mode)
+// Open opens a COM port.
+// If portName is empty, tries ports from GetPortsList (sorted) until one opens successfully
+// (busy ports are skipped). If none can be opened, returns an error.
+// Returns the actual port name that was opened.
+func (p *Port) Open(portName string, baudRate int) (string, error) {
+	if p.port != nil {
+		return "", fmt.Errorf("port is already open (%s), call Close() first", p.name)
+	}
+
+	mode := serialMode(baudRate)
+
+	if portName != "" {
+		port, err := serial.Open(portName, mode)
+		if err != nil {
+			return "", err
+		}
+		p.port = port
+		p.name = portName
+		return portName, nil
+	}
+
+	ports, err := serial.GetPortsList()
 	if err != nil {
 		return "", err
 	}
+	if len(ports) == 0 {
+		return "", fmt.Errorf("no COM ports found")
+	}
+	sort.Strings(ports)
 
-	p.port = port
-	p.name = portName
-	return portName, nil
+	var errs []string
+	for _, name := range ports {
+		port, err := serial.Open(name, mode)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		p.port = port
+		p.name = name
+		return name, nil
+	}
+
+	return "", fmt.Errorf("no free COM ports: %s", strings.Join(errs, "; "))
 }
 
 // Name returns the name of the opened port, or empty if not open.

@@ -20,7 +20,7 @@ import (
 
 func main() {
     var p ezport.Port
-    name, err := p.Open("", 9600) // empty name → first port alphabetically
+    name, err := p.Open("", 9600) // empty name → first free port
     if err != nil {
         panic(err)
     }
@@ -31,7 +31,7 @@ func main() {
 }
 ```
 
-Two independent ports:
+Two independent ports (explicit names):
 
 ```go
 var p1, p2 ezport.Port
@@ -39,10 +39,18 @@ _, err1 := p1.Open("COM3", 9600)
 _, err2 := p2.Open("COM4", 115200)
 ```
 
+Two ports with auto-select (next free each time):
+
+```go
+var p1, p2 ezport.Port
+name1, err1 := p1.Open("", 9600)
+name2, err2 := p2.Open("", 9600) // skips busy; errors if no free port left
+```
+
 ## Features
 
 - ✅ **Instance-based API** — each `Port` is an independent handle (multiple ports at once)
-- ✅ **Automatic port selection** — if port name is empty, selects the first one alphabetically
+- ✅ **Automatic port selection** — if port name is empty, opens the first free port (busy skipped)
 - ✅ **Simple API** — `Open`, `Write`, `Close`
 - ✅ **Errors are returned** — caller decides how to handle them
 - ✅ **Cross-platform** — Windows, Linux, macOS
@@ -59,14 +67,13 @@ actual, err := p.Open(portName, baudRate)
 ## Usage Examples
 
 ```bash
-# Run the example from project root
-go run ./examples/main.go
+# Send a message (auto-select or -port)
+go run ./examples/1_send
+go run ./examples/1_send -port COM3
+go run ./examples/1_send -port COM3 -baud 115200 -msg "Hello!"
 
-# Specify a specific port
-go run ./examples/main.go -port COM3
-
-# With baud rate and message
-go run ./examples/main.go -port COM3 -baud 115200 -msg "Hello!"
+# Two auto-selected free ports (needs ≥2 free COM ports)
+go run ./examples/2_two_ports
 ```
 
 ## Dependencies
