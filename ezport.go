@@ -9,26 +9,34 @@ import (
 	"go.bug.st/serial"
 )
 
-var port serial.Port
+// Port is an independent serial port handle. Multiple Port values may be open at once.
+type Port struct {
+	port serial.Port
+	name string
+}
 
-// Open opens a COM port. If portName is empty, selects the first available port alphabetically.
-func Open(portName *string, baudRate *int) error {
-	// If port is not specified, select the first one alphabetically
-	if *portName == "" {
-		ports, err := serial.GetPortsList()
-		if err != nil {
-			return err
-		}
-		if len(ports) == 0 {
-			return fmt.Errorf("no COM ports found")
-		}
-		sort.Strings(ports)
-		*portName = ports[0]
+// Open opens a COM port.
+// If portName is empty, selects the first available port alphabetically.
+// Returns the actual port name that was opened.
+func (p *Port) Open(portName string, baudRate int) (string, error) {
+	if p.port != nil {
+		return "", fmt.Errorf("port is already open (%s), call Close() first", p.name)
 	}
 
-	// Port settings - disable flow control to avoid waiting
+	if portName == "" {
+		ports, err := serial.GetPortsList()
+		if err != nil {
+			return "", err
+		}
+		if len(ports) == 0 {
+			return "", fmt.Errorf("no COM ports found")
+		}
+		sort.Strings(ports)
+		portName = ports[0]
+	}
+
 	mode := &serial.Mode{
-		BaudRate: *baudRate,
+		BaudRate: baudRate,
 		DataBits: 8,
 		Parity:   serial.NoParity,
 		StopBits: serial.OneStopBit,
@@ -38,37 +46,38 @@ func Open(portName *string, baudRate *int) error {
 		},
 	}
 
-	// Open the port
-	var err error
-	port, err = serial.Open(*portName, mode)
+	port, err := serial.Open(portName, mode)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return nil
+	p.port = port
+	p.name = portName
+	return portName, nil
+}
+
+// Name returns the name of the opened port, or empty if not open.
+func (p *Port) Name() string {
+	return p.name
 }
 
 // Write sends a string to the open port.
-func Write(message string) error {
-	if port == nil {
+func (p *Port) Write(message string) error {
+	if p.port == nil {
 		return fmt.Errorf("port is not open, call Open() first")
 	}
 
-	_, err := port.Write([]byte(message))
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Close closes the port.
-func Close() error {
-	if port == nil {
-		return nil
-	}
-	err := port.Close()
-	port = nil
+	_, err := p.port.Write([]byte(message))
 	return err
 }
 
+// Close closes the port.
+func (p *Port) Close() error {
+	if p.port == nil {
+		return nil
+	}
+	err := p.port.Close()
+	p.port = nil
+	p.name = ""
+	return err
+}

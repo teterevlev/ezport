@@ -14,17 +14,18 @@ func main() {
 	message := flag.String("msg", "Hello, COM port!", "String to send to port")
 	flag.Parse()
 
-	if err := ezport.Open(portName, baudRate); err != nil {
+	var p ezport.Port
+	actual, err := p.Open(*portName, *baudRate)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening port: %v\n", err)
 		os.Exit(1)
 	}
-	defer ezport.Close()
+	defer p.Close()
 
-	if err := ezport.Write(*message); err != nil {
+	if err := p.Write(*message); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing to port: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Sent: %s\n", *message)
+	fmt.Printf("Opened %s, sent: %s\n", actual, *message)
 }
-

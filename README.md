@@ -14,28 +14,47 @@ go get github.com/teterevlev/ezport
 package main
 
 import (
-    "flag"
+    "fmt"
     "github.com/teterevlev/ezport"
 )
 
 func main() {
-    portName := flag.String("port", "", "COM port name")
-    baudRate := flag.Int("baud", 9600, "Baud rate")
-    message := flag.String("msg", "Hello, COM port!", "Message")
-    flag.Parse()
+    var p ezport.Port
+    name, err := p.Open("", 9600) // empty name → first port alphabetically
+    if err != nil {
+        panic(err)
+    }
+    defer p.Close()
 
-    ezport.Open(portName, baudRate)
-    ezport.Write(*message)
-    defer ezport.Close()
+    fmt.Println("opened", name)
+    _ = p.Write("Hello, COM port!")
 }
+```
+
+Two independent ports:
+
+```go
+var p1, p2 ezport.Port
+_, err1 := p1.Open("COM3", 9600)
+_, err2 := p2.Open("COM4", 115200)
 ```
 
 ## Features
 
-- ✅ **Automatic port selection** - if port is not specified, selects the first one alphabetically
-- ✅ **Simple API** - just two functions: `Open()` and `Write()`
-- ✅ **Error handling** - errors are printed to stderr without crashing the program
-- ✅ **Cross-platform** - Windows, Linux, macOS
+- ✅ **Instance-based API** — each `Port` is an independent handle (multiple ports at once)
+- ✅ **Automatic port selection** — if port name is empty, selects the first one alphabetically
+- ✅ **Simple API** — `Open`, `Write`, `Close`
+- ✅ **Errors are returned** — caller decides how to handle them
+- ✅ **Cross-platform** — Windows, Linux, macOS
+
+## Breaking change
+
+Package-level `Open` / `Write` / `Close` and `Open(*string, *int)` were replaced by methods on `Port`:
+
+```go
+var p ezport.Port
+actual, err := p.Open(portName, baudRate)
+```
 
 ## Usage Examples
 
