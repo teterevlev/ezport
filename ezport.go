@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.bug.st/serial"
@@ -14,6 +15,8 @@ import (
 
 const defaultReadTimeout = 500 * time.Millisecond
 const closeReadTimeout = 10 * time.Millisecond
+const defaultStartReadBuf = 64
+const readChunkSize = 1024
 
 // Config holds serial port settings.
 type Config struct {
@@ -35,6 +38,11 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
+// Stats holds counters for the port reader.
+type Stats struct {
+	Dropped uint64
+}
+
 // Port is an independent serial port handle. Multiple Port values may be open at once.
 type Port struct {
 	mu     sync.Mutex
@@ -42,7 +50,12 @@ type Port struct {
 	name   string
 	cfg    Config
 	paused bool
-	wg     sync.WaitGroup
+	wg     sync.WaitGroup // in-flight serial Read calls
+
+	reading  bool
+	stopCh   chan struct{}
+	readerWG sync.WaitGroup
+	dropped  atomic.Uint64
 }
 
 func serialMode(baudRate int) *serial.Mode {
@@ -122,6 +135,7 @@ func (p *Port) openNamed(name string, mode *serial.Mode, cfg Config) (string, er
 	p.name = name
 	p.cfg = cfg
 	p.paused = false
+	p.dropped.Store(0)
 	p.mu.Unlock()
 	return name, nil
 }
@@ -147,8 +161,13 @@ func (p *Port) Write(message string) error {
 }
 
 // Read reads up to len(buf) bytes from the port (honours ReadTimeout).
+// Cannot be used while StartRead is active.
 func (p *Port) Read(buf []byte) (int, error) {
 	p.mu.Lock()
+	if p.reading {
+		p.mu.Unlock()
+		return 0, fmt.Errorf("StartRead is active, use the channel")
+	}
 	if p.paused || p.port == nil {
 		p.mu.Unlock()
 		return 0, fmt.Errorf("port is not open, call Open() first")
@@ -162,11 +181,111 @@ func (p *Port) Read(buf []byte) (int, error) {
 	return n, err
 }
 
-// Close closes the port and waits for an in-flight Read to finish.
+// StartRead starts a background reader that sends raw chunks on a channel.
+// bufSize is the channel capacity (default 64). On overflow chunks are dropped
+// and Stats().Dropped is incremented; the reader never blocks on send.
+// Close stops the reader and closes the channel. Not started by Open.
+func (p *Port) StartRead(bufSize int) (<-chan []byte, error) {
+	if bufSize <= 0 {
+		bufSize = defaultStartReadBuf
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.port == nil {
+		return nil, fmt.Errorf("port is not open, call Open() first")
+	}
+	if p.reading {
+		return nil, fmt.Errorf("StartRead already running")
+	}
+
+	ch := make(chan []byte, bufSize)
+	stopCh := make(chan struct{})
+	p.stopCh = stopCh
+	p.reading = true
+	p.dropped.Store(0)
+
+	p.readerWG.Add(1)
+	go p.readLoop(ch, stopCh)
+
+	return ch, nil
+}
+
+func (p *Port) readLoop(ch chan []byte, stopCh <-chan struct{}) {
+	defer p.readerWG.Done()
+	defer close(ch)
+	defer func() {
+		p.mu.Lock()
+		p.reading = false
+		if p.stopCh == stopCh {
+			p.stopCh = nil
+		}
+		p.mu.Unlock()
+	}()
+
+	buf := make([]byte, readChunkSize)
+	for {
+		select {
+		case <-stopCh:
+			return
+		default:
+		}
+
+		p.mu.Lock()
+		if p.paused || p.port == nil {
+			p.mu.Unlock()
+			return
+		}
+		port := p.port
+		p.mu.Unlock()
+
+		p.wg.Add(1)
+		n, err := port.Read(buf)
+		p.wg.Done()
+
+		if err != nil {
+			select {
+			case <-stopCh:
+				return
+			default:
+				continue
+			}
+		}
+		if n <= 0 {
+			continue
+		}
+
+		chunk := make([]byte, n)
+		copy(chunk, buf[:n])
+
+		select {
+		case <-stopCh:
+			return
+		case ch <- chunk:
+		default:
+			p.dropped.Add(1)
+		}
+	}
+}
+
+// Stats returns reader counters (e.g. dropped chunks on channel overflow).
+func (p *Port) Stats() Stats {
+	return Stats{Dropped: p.dropped.Load()}
+}
+
+// Dropped returns the number of chunks dropped due to a full StartRead channel.
+func (p *Port) Dropped() uint64 {
+	return p.dropped.Load()
+}
+
+// Close closes the port and waits for an in-flight Read / StartRead to finish.
 // Close on an already closed port is a no-op.
 func (p *Port) Close() error {
 	p.mu.Lock()
 	p.paused = true
+	stopCh := p.stopCh
+	p.stopCh = nil
 	port := p.port
 	name := p.name
 	p.port = nil
@@ -176,7 +295,11 @@ func (p *Port) Close() error {
 	}
 	p.mu.Unlock()
 
+	if stopCh != nil {
+		close(stopCh)
+	}
 	p.wg.Wait()
+	p.readerWG.Wait()
 
 	if port == nil {
 		return nil

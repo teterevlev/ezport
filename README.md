@@ -58,13 +58,24 @@ name1, err1 := p1.Open("", 9600)
 name2, err2 := p2.Open("", 9600) // skips busy; errors if no free port left
 ```
 
+Background read via channel (opt-in; not started by Open):
+
+```go
+ch, err := p.StartRead(64)
+for chunk := range ch {
+    fmt.Printf("%x\n", chunk)
+}
+// if consumer is slow, chunks are dropped — check p.Dropped() / p.Stats()
+```
+
 ## Features
 
 - ✅ **Instance-based API** — each `Port` is an independent handle (multiple ports at once)
 - ✅ **Automatic port selection** — if port name is empty, opens the first free port (busy skipped)
 - ✅ **Config** — baud, read timeout; 8N1 with RTS/DTR off
-- ✅ **Safe Close** — waits for an in-flight `Read`; no-op if already closed
-- ✅ **Simple API** — `Open` / `OpenConfig`, `Write`, `Read`, `Close`
+- ✅ **Safe Close** — waits for an in-flight `Read` / `StartRead`; no-op if already closed
+- ✅ **StartRead channel** — raw chunks; on overflow drop + `Dropped`/`Stats()`
+- ✅ **Simple API** — `Open` / `OpenConfig`, `Write`, `Read`, `StartRead`, `Close`
 - ✅ **Errors are returned** — caller decides how to handle them
 - ✅ **Cross-platform** — Windows, Linux, macOS
 
@@ -87,6 +98,10 @@ go run ./examples/1_send -port COM3 -baud 115200 -msg "Hello!"
 
 # Two auto-selected free ports (needs ≥2 free COM ports)
 go run ./examples/2_two_ports
+
+# Background read via StartRead channel
+go run ./examples/3_read
+go run ./examples/3_read -port COM3
 ```
 
 ## Dependencies
