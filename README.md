@@ -31,6 +31,17 @@ func main() {
 }
 ```
 
+Or with explicit config (read timeout, etc.):
+
+```go
+var p ezport.Port
+name, err := p.OpenConfig(ezport.Config{
+    PortName:    "",
+    BaudRate:    115200,
+    ReadTimeout: 500 * time.Millisecond,
+})
+```
+
 Two independent ports (explicit names):
 
 ```go
@@ -51,7 +62,9 @@ name2, err2 := p2.Open("", 9600) // skips busy; errors if no free port left
 
 - ✅ **Instance-based API** — each `Port` is an independent handle (multiple ports at once)
 - ✅ **Automatic port selection** — if port name is empty, opens the first free port (busy skipped)
-- ✅ **Simple API** — `Open`, `Write`, `Close`
+- ✅ **Config** — baud, read timeout; 8N1 with RTS/DTR off
+- ✅ **Safe Close** — waits for an in-flight `Read`; no-op if already closed
+- ✅ **Simple API** — `Open` / `OpenConfig`, `Write`, `Read`, `Close`
 - ✅ **Errors are returned** — caller decides how to handle them
 - ✅ **Cross-platform** — Windows, Linux, macOS
 
